@@ -43,7 +43,7 @@ class Mechanism:
     def get_default_command(self) -> Command | None:
         return self.get_registered_scheduler().get_default_command_for(self)
 
-    def run(self, command_body: Callable[[Any], Any]) -> NeedsNameBuilderStage:
+    def run(self, command_body: Callable[..., Any]) -> NeedsNameBuilderStage:
         return StagedCommandBuilder().requiring(self).executing(command_body)
 
     def run_repeatedly(self, loop_body: Callable[[], None]) -> NeedsNameBuilderStage:

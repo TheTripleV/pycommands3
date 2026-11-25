@@ -51,9 +51,52 @@ def body(co: Coroutine) -> None:
     while True:
         pass               # forgot co.yield_(): freezes the robot; nothing can flag it
 ''',
+    "asyncawait_noco": '''
+from commands3.custom.asyncawait_noco import co
+
+async def helper() -> None:
+    await co.wait(1.0)
+
+async def body() -> None:
+    helper()               # forgot await (user helper)
+    co.wait(1.0)           # forgot await (framework op)
+    await co.yield_()
+''',
+    "asyncgen_noco": '''
+from commands3.custom.asyncgen_noco import co
+
+async def helper() -> None:
+    await co.wait(1.0)
+
+async def body():
+    helper()               # forgot await (user helper)
+    co.wait(1.0)           # forgot await (framework op)
+    yield
+''',
+    "generators_noco": '''
+from commands3.custom.generators_noco import co
+
+def helper():
+    yield from co.wait(1.0)
+
+def body():
+    helper()               # forgot yield from (user helper)
+    co.wait(1.0)           # forgot yield from (framework op)
+    yield
+''',
+    "greenlets_noco": '''
+from commands3.custom.greenlets_noco import co
+
+def body() -> None:
+    while True:
+        pass               # forgot co.yield_(): freezes the robot; nothing can flag it
+''',
 }
 
-EXPECTED_FLAGGED = {"asyncawait": 2, "asyncgen": 2, "generators": 0, "greenlets": 0}
+EXPECTED_FLAGGED = {
+    "asyncawait": 2, "asyncgen": 2, "generators": 0, "greenlets": 0,
+    "asyncawait_noco": 2, "asyncgen_noco": 2, "generators_noco": 0, "greenlets_noco": 0,
+}
 
 
 @pytest.mark.skipif(PYRIGHT is None, reason="pyright not installed")

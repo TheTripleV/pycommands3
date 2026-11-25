@@ -181,3 +181,12 @@ Status: 2116 passing (all 8 variants), 9 s. Python additions: finally-on-cancel,
       bindings on the same trigger (if_true still does), but a new trigger fires on its first poll.
 - [x] Verified against Java: tools/java_parity/ScopeScenarios.java runs the same scenarios on the real
       Java commandsv3 (compiled from ../allwpilib against the cached WPILib jars, JDK 25): all 33 checks pass.
+
+## No-`co`-parameter variants (2x implementations, 16 total) (2026-11-25)
+- [x] Shared mounted-coroutine tracking (`_current_coroutine` / `get_current_coroutine`) in `_common/coroutine.py` + `SchedulerBase`
+- [x] `Frontend.pass_co` flag + global `co` proxy classes per style (`_frontends/*`)
+- [x] 8 new variant modules: `commands3.{custom,aio}.{asyncawait,generators,asyncgen,greenlets}_noco`
+- [x] `tools/translate.py` + `tools/regen.sh` support for `*_noco` styles
+- [x] Examples in `examples/*/*_noco` (no `co` parameter) alongside existing `co`-parameter examples
+- [x] Conformance tests (`tests/conformance/*_noco`), integration tests (5 examples x 16 variants), frontend & static analysis tests
+- [x] Verify all tests pass and `pyright` is clean

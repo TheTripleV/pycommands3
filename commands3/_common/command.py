@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 DEFAULT_PRIORITY = 0
 LOWEST_PRIORITY = -(2**31)
 HIGHEST_PRIORITY = 2**31 - 1
+_UNSET = object()
 
 
 def _fmt_seconds(seconds: float) -> str:
@@ -36,8 +37,11 @@ class Command:
     _native: bool = False
 
     # ------------------------------------------------------------------- interface -----
-    def run(self, coroutine: Any) -> Any:
-        raise NotImplementedError
+    if TYPE_CHECKING:
+        run: Callable[..., Any]
+    else:
+        def run(self, coroutine: Any = None) -> Any:
+            raise NotImplementedError
 
     def on_cancel(self) -> None:
         """Called when the command is canceled before it completes naturally."""
@@ -109,7 +113,7 @@ class Command:
 
     # ------------------------------------------------------------------- factories -----
     @staticmethod
-    def no_requirements(body: Callable[[Any], Any]) -> "NeedsNameBuilderStage":
+    def no_requirements(body: Callable[..., Any]) -> "NeedsNameBuilderStage":
         return StagedCommandBuilder().no_requirements().executing(body)
 
     @staticmethod
@@ -183,8 +187,10 @@ class _BuilderBackedCommand(Command):
         self._priority = b._priority
         self._native = b._native
 
-    def run(self, coroutine: Any) -> Any:
+    def run(self, coroutine: Any = _UNSET) -> Any:
         assert self._impl is not None
+        if coroutine is _UNSET:
+            return self._impl()
         return self._impl(coroutine)
 
     def on_cancel(self) -> None:
@@ -206,7 +212,7 @@ class _BuilderBackedCommand(Command):
 class StagedCommandBuilder:
     def __init__(self) -> None:
         self._requirements: list = []
-        self._impl: Callable[[Any], Any] | None = None
+        self._impl: Callable[..., Any] | None = None
         self._on_cancel: Callable[[], None] | None = None
         self._on_exit: Callable[[], None] | None = None
         self._name: str | None = None
@@ -243,7 +249,7 @@ class NeedsExecutionBuilderStage:
         self._b.requiring(*mechanisms)
         return self
 
-    def executing(self, impl: Callable[[Any], Any]) -> "NeedsNameBuilderStage":
+    def executing(self, impl: Callable[..., Any]) -> "NeedsNameBuilderStage":
         self._b._throw_if_built()
         if impl is None:
             raise TypeError("impl cannot be None")

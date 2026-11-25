@@ -12,7 +12,13 @@ from __future__ import annotations
 import inspect
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Iterable, NoReturn
 
-from .._common.coroutine import CoroutineCore, ForkResult, WaitResult
+from .._common.coroutine import (
+    CoroutineCore,
+    ForkResult,
+    WaitResult,
+    _GlobalCoroutineBase,
+    get_current_coroutine,
+)
 from .._common.park import Op
 from .._common.scheduler import Frontend, Task
 
@@ -112,3 +118,45 @@ class AsyncAwaitFrontend(Frontend):
 
     def make_task(self, body, co) -> Task:
         return CoroutineTask(body)
+
+
+def _cur() -> Coroutine:
+    return get_current_coroutine()  # type: ignore[return-value]
+
+
+class GlobalCoroutine(_GlobalCoroutineBase):
+    """Global ``co`` proxy for async/await commands without a ``co`` parameter."""
+
+    async def yield_(self) -> bool:
+        return await _cur().yield_()
+
+    async def park(self) -> NoReturn:
+        await _cur().park()
+        raise AssertionError("unreachable")
+
+    async def await_(self, command: "Command") -> ForkResult:
+        return await _cur().await_(command)
+
+    async def await_all(self, *commands: "Command | Iterable[Command]") -> ForkResult:
+        return await _cur().await_all(*commands)
+
+    async def await_any(self, *commands: "Command | Iterable[Command]") -> ForkResult:
+        return await _cur().await_any(*commands)
+
+    async def wait(self, seconds: float) -> None:
+        await _cur().wait(seconds)
+
+    async def wait_until(self, condition: Callable[[], bool],
+                         timeout: float | None = None) -> WaitResult:
+        return await _cur().wait_until(condition, timeout)
+
+    async def await_future(self, awaitable: Any) -> Any:
+        return await _cur().await_future(awaitable)
+
+
+co = GlobalCoroutine()
+
+
+class AsyncAwaitNoCoFrontend(AsyncAwaitFrontend):
+    name = "asyncawait_noco"
+    pass_co = False

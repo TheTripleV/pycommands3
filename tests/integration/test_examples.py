@@ -17,7 +17,10 @@ import pytest
 
 HERE = Path(__file__).parent
 EXAMPLES = ["template", "skeleton", "hatchbot", "rebuilt", "superstructure"]
-STYLES = ["asyncawait", "generators", "asyncgen", "greenlets"]
+STYLES = [
+    "asyncawait", "generators", "asyncgen", "greenlets",
+    "asyncawait_noco", "generators_noco", "asyncgen_noco", "greenlets_noco",
+]
 RUNTIMES = ["custom", "aio"]
 VARIANTS = list(itertools.product(STYLES, RUNTIMES))
 

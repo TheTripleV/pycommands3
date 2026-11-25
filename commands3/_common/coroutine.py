@@ -31,6 +31,42 @@ if TYPE_CHECKING:
     from .scheduler import SchedulerBase
 
 
+_current_coroutine: "CoroutineCore | None" = None
+
+
+def set_current_coroutine(co: "CoroutineCore | None") -> None:
+    """Set the currently mounted coroutine (used by no-`co`-parameter front-ends)."""
+    global _current_coroutine
+    _current_coroutine = co
+
+
+def get_current_coroutine() -> "CoroutineCore":
+    """Return the currently mounted coroutine, or raise if called outside a command."""
+    co = _current_coroutine
+    if co is None:
+        raise RuntimeError("Coroutines can only be used by the command bound to them")
+    return co
+
+
+class _GlobalCoroutineBase:
+    """Base for global `co` proxies that forward to the currently mounted coroutine."""
+
+    def set_cancel_on_fork_failure(self, cancel_on_fork_failure: bool) -> None:
+        get_current_coroutine().set_cancel_on_fork_failure(cancel_on_fork_failure)
+
+    def is_cancel_on_fork_failure(self) -> bool:
+        return get_current_coroutine().is_cancel_on_fork_failure()
+
+    def scheduler(self) -> "SchedulerBase":
+        return get_current_coroutine().scheduler()
+
+    def request_cancellation(self) -> NoReturn:
+        get_current_coroutine().request_cancellation()
+
+    def fork(self, *commands: "Command | Iterable[Command]") -> "ForkResult":
+        return get_current_coroutine().fork(*commands)
+
+
 class CancellationRequested(BaseException):
     """Internal: the running command asked to be canceled."""
 

@@ -25,6 +25,7 @@ from .coroutine import (
     ForkFailedInterrupt,
     ForkResult,
     Unwind,
+    set_current_coroutine,
 )
 from .park import LIVE, Park
 from .registry import get_default_scheduler, register_variant, set_default_scheduler
@@ -98,6 +99,7 @@ class Task:
 class Frontend:
     name = "?"
     coroutine_class: type[CoroutineCore] = CoroutineCore
+    pass_co: bool = True
 
     def make_task(self, body: Callable[[], Any], co: CoroutineCore) -> Task:
         raise NotImplementedError
@@ -270,6 +272,10 @@ class SchedulerBase:
             f"({awaitable!r}); use the asyncio runtime (commands3.aio.*)"
         )
 
+    def _set_mounted(self, co: CoroutineCore | None) -> None:
+        self._mounted = co
+        set_current_coroutine(co)
+
     def _make_task(self, state: "CommandState | _SideloadState", body: Callable[[], Any],
                    native: bool) -> Task:
         if native:
@@ -304,11 +310,12 @@ class SchedulerBase:
         return self._default_command_bindings.get(mechanism, [])
 
     # --------------------------------------------------------------- sideloads -------
-    def sideload(self, callback: Callable[[Any], Any]) -> None:
-        """Run ``callback(coroutine)`` as a periodic coroutine before triggers are polled."""
+    def sideload(self, callback: Callable[..., Any]) -> None:
+        """Run ``callback`` as a periodic coroutine before triggers are polled."""
         co = self._new_coroutine(cancel_on_fork_failure=False)
         st = _SideloadState(BindingScope.create_narrowest_scope(self), co)
-        st.task = self._make_task(st, lambda: callback(co), native=False)
+        body = (lambda: callback(co)) if self.frontend.pass_co else (lambda: callback())
+        st.task = self._make_task(st, body, native=False)
         self._sideloads.append(st)
 
     def _sideload_native(self, op_factory: Callable[[CoroutineCore], Any]) -> None:
@@ -607,11 +614,11 @@ class SchedulerBase:
 
     def _step_sideload(self, st: _SideloadState) -> Outcome:
         prev = self._mounted
-        self._mounted = st.coroutine
+        self._set_mounted(st.coroutine)
         try:
             return self._mount_step(st)
         finally:
-            self._mounted = prev
+            self._set_mounted(prev)
 
     def _finish_sideload(self, st: _SideloadState, outcome: Any) -> None:
         if type(outcome) is not Outcome:
@@ -639,7 +646,7 @@ class SchedulerBase:
         previous_mounted = self._mounted
         self._ancestry.append(state)
         state.on_stack = True
-        self._mounted = state.coroutine
+        self._set_mounted(state.coroutine)
         if self._listeners:
             self._emit(Mounted(state.command, get_time_ns()))
         return previous_mounted, _perf_ns()
@@ -660,7 +667,7 @@ class SchedulerBase:
         ancestry = self._ancestry
         if ancestry and ancestry[-1] is state:
             ancestry.pop()
-        self._mounted = previous_mounted
+        self._set_mounted(previous_mounted)
         if type(outcome) is not Outcome:  # hot path: the command suspended
             if state.doomed:
                 self._close_task(state)

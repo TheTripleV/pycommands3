@@ -16,9 +16,10 @@ from __future__ import annotations
 import inspect
 from typing import Any, Callable
 
+from .._common.coroutine import get_current_coroutine
 from .._common.park import LIVE, Park
 from .._common.scheduler import Frontend, Task
-from .asyncawait import Coroutine as _AsyncCoroutine
+from .asyncawait import Coroutine as _AsyncCoroutine, GlobalCoroutine as _GlobalAsyncCoroutine
 
 
 class Coroutine(_AsyncCoroutine):
@@ -94,3 +95,19 @@ class AsyncGenFrontend(Frontend):
 
     def make_task(self, body, co) -> Task:
         return AsyncGenTask(body, co)  # type: ignore[arg-type]
+
+
+class GlobalCoroutine(_GlobalAsyncCoroutine):
+    """Global ``co`` proxy for async-generator commands without a ``co`` parameter."""
+
+    @property
+    def status(self) -> Any:
+        return get_current_coroutine().status  # type: ignore[attr-defined]
+
+
+co = GlobalCoroutine()
+
+
+class AsyncGenNoCoFrontend(AsyncGenFrontend):
+    name = "asyncgen_noco"
+    pass_co = False

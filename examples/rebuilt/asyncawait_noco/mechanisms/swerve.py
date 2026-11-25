@@ -1,0 +1,107 @@
+import math
+from typing import Callable
+
+import wpilib
+from wpimath import (ChassisVelocities, PIDController, Pose2d, Rotation2d, SwerveModulePosition,
+                     SwerveModuleVelocity)
+
+from commands3.custom.asyncawait_noco import Command, co, Mechanism
+
+import constants as C
+from stubs.path_follower import PathFollower
+from stubs.smart_motor import ExampleSmartMotorController, PIDMode
+
+
+class SwerveModule:
+    def __init__(self, drive_motor: ExampleSmartMotorController,
+                 turn_motor: ExampleSmartMotorController):
+        self.drive_motor = drive_motor
+        self.turn_motor = turn_motor
+
+    def set_target_velocity(self, target: SwerveModuleVelocity) -> None:
+        self.drive_motor.set_setpoint(PIDMode.VELOCITY, target.velocity)
+        self.turn_motor.set_setpoint(PIDMode.POSITION, target.angle.radians())
+
+    def stop(self) -> None:
+        self.drive_motor.set_throttle(0.0)
+        self.turn_motor.set_throttle(0.0)
+
+    def get_position(self) -> SwerveModulePosition:
+        return SwerveModulePosition(self.drive_motor.get_encoder_distance(),
+                                    Rotation2d(self.turn_motor.get_encoder_distance()))
+
+    def get_velocity(self) -> SwerveModuleVelocity:
+        return SwerveModuleVelocity(self.drive_motor.get_encoder_rate(),
+                                    Rotation2d(self.turn_motor.get_encoder_distance()))
+
+
+def _angle_between(source: Pose2d, target: Pose2d) -> float:
+    return math.atan2(target.y - source.y, target.x - source.x)
+
+
+class SwerveDrive(Mechanism):
+    def __init__(self):
+        super().__init__("SwerveDrive")
+        self.kinematics = C.KINEMATICS
+        self.gyro = wpilib.OnboardIMU(wpilib.OnboardIMU.MountOrientation.FLAT)
+        M = ExampleSmartMotorController
+        self.modules = [
+            SwerveModule(M(C.FRONT_LEFT_DRIVE_ID), M(C.FRONT_LEFT_TURN_ID)),
+            SwerveModule(M(C.FRONT_RIGHT_DRIVE_ID), M(C.FRONT_RIGHT_TURN_ID)),
+            SwerveModule(M(C.REAR_LEFT_DRIVE_ID), M(C.REAR_LEFT_TURN_ID)),
+            SwerveModule(M(C.REAR_RIGHT_DRIVE_ID), M(C.REAR_RIGHT_TURN_ID)),
+        ]
+        self.heading_controller = PIDController(0.05, 0, 0)
+        self.heading_controller.enable_continuous_input(-math.pi, math.pi)
+
+    def get_gyro_heading(self) -> Rotation2d:
+        return self.gyro.get_rotation2d()
+
+    def get_module_positions(self):
+        return tuple(m.get_position() for m in self.modules)
+
+    def idle(self) -> Command:
+        def stop_all() -> None:
+            for m in self.modules:
+                m.stop()
+
+        return self.run_repeatedly(stop_all).named("Drive.Idle")
+
+    def driver_control(self, controller) -> Command:
+        return self.drive_field_relative(lambda: ChassisVelocities(
+            C.MAX_VELOCITY * -controller.get_left_y(),
+            C.MAX_VELOCITY * -controller.get_left_x(),
+            C.MAX_TURN_RATE * -controller.get_right_x()))
+
+    def _omega_toward(self, robot: Pose2d, target: Pose2d) -> float:
+        return self.heading_controller.calculate(robot.rotation().radians(),
+                                                 _angle_between(robot, target))
+
+    def aim_at(self, robot_pose: Callable[[], Pose2d], target_pose: Pose2d) -> Command:
+        return (self.drive_field_relative(
+                    lambda: ChassisVelocities(0, 0, self._omega_toward(robot_pose(), target_pose)))
+                .until(self.heading_controller.at_setpoint)
+                .named("Drive.AimAt"))
+
+    def aim_assist(self, controller, robot_pose: Callable[[], Pose2d],
+                   target_pose: Callable[[], Pose2d]) -> Command:
+        return self.drive_field_relative(lambda: ChassisVelocities(
+            C.MAX_VELOCITY * -controller.get_left_y(),
+            C.MAX_VELOCITY * -controller.get_left_x(),
+            self._omega_toward(robot_pose(), target_pose())))
+
+    def drive_field_relative(self, velocities: Callable[[], ChassisVelocities]) -> Command:
+        def apply():
+            v = velocities().to_robot_relative(self.get_gyro_heading())
+            for module, target in zip(self.modules, self.kinematics.to_swerve_module_velocities(v)):
+                module.set_target_velocity(target)
+
+        return self.run_repeatedly(apply).named("Drive.DriveSpeeds")
+
+    def follow_path(self, path_name: str) -> Command:
+        async def body():
+            follower = PathFollower.load(path_name)
+            co.fork(self.drive_field_relative(follower.next))
+            await co.wait_until(follower.is_done)
+
+        return self.run(body).named(f"Drive.FollowPath[{path_name}]")

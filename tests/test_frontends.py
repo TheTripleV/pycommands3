@@ -218,3 +218,50 @@ def test_greenlet_rejects_wrong_style_body(runtime, kind):
     with pytest.raises(TypeError, match="greenlet front-end"):
         s.run()
     assert ran == []
+
+
+# ------------------------------------------------------------------ *_noco ------------
+@pytest.mark.parametrize("style", ["asyncawait_noco", "generators_noco", "asyncgen_noco", "greenlets_noco"])
+@pytest.mark.parametrize("runtime", RUNTIMES)
+def test_noco_outside_command_raises(runtime, style):
+    mod = importlib.import_module(f"commands3.{runtime}.{style}")
+    with pytest.raises(RuntimeError, match="Coroutines can only be used by the command bound to them"):
+        mod.co.scheduler()
+
+
+@pytest.mark.parametrize("runtime", RUNTIMES)
+def test_generators_noco_forgotten_yield_from_warns(runtime):
+    mod = importlib.import_module(f"commands3.{runtime}.generators_noco")
+    s = mod.Scheduler.create_independent_scheduler()
+
+    def body():
+        mod.co.wait(1.0)  # BUG: forgot `yield from`; GenOp.__del__ warns
+        yield
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        s.schedule(Command.no_requirements(body).named("c"))
+        s.run()
+        gc.collect()
+    assert any("forget `yield from`" in str(x.message) for x in w)
+
+
+@pytest.mark.parametrize("style", ["asyncawait_noco", "asyncgen_noco"])
+@pytest.mark.parametrize("runtime", RUNTIMES)
+def test_async_noco_forgotten_await_warns(runtime, style):
+    mod = importlib.import_module(f"commands3.{runtime}.{style}")
+    s = mod.Scheduler.create_independent_scheduler()
+
+    async def helper():
+        await mod.co.yield_()
+
+    async def body():
+        helper()  # BUG: forgot await -> "coroutine 'helper' was never awaited"
+        await mod.co.yield_()
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        s.schedule(Command.no_requirements(body).named("c"))
+        s.run()
+        gc.collect()
+    assert any("was never awaited" in str(x.message) for x in w)

@@ -1,0 +1,72 @@
+"""Stand-in for a vendor smart motor controller (port of ExampleSmartMotorController).
+
+It records the last command it was given so simulation tests can observe mechanism output,
+and (optionally) moves its encoder toward a position setpoint so closed loops converge.
+"""
+
+import enum
+
+
+class PIDMode(enum.Enum):
+    POSITION = 0
+    VELOCITY = 1
+    MOVEMENT_WITCHCRAFT = 2
+
+
+class ExampleSmartMotorController:
+    registry: dict[int, "ExampleSmartMotorController"] = {}
+
+    def __init__(self, port: int):
+        self.port = port
+        self.value = 0.0
+        self.mode: PIDMode | None = None
+        self.setpoint = 0.0
+        self.position = 0.0
+        self.rate = 0.0
+        ExampleSmartMotorController.registry[port] = self
+
+    def set_pid(self, kp: float, ki: float, kd: float) -> None:
+        pass
+
+    def set_setpoint(self, mode: PIDMode, setpoint: float) -> None:
+        self.mode, self.setpoint = mode, setpoint
+
+    def set_voltage(self, volts: float) -> None:
+        self.mode, self.value = None, volts / 12
+
+    def follow(self, leader: "ExampleSmartMotorController") -> None:
+        pass
+
+    def get_encoder_distance(self) -> float:
+        return self.position
+
+    def get_encoder_rate(self) -> float:
+        return self.rate
+
+    def reset_encoder(self) -> None:
+        self.position = 0.0
+
+    def set_throttle(self, throttle: float) -> None:
+        self.mode, self.value = None, throttle
+
+    def get_throttle(self) -> float:
+        return self.value
+
+    def set_inverted(self, inverted: bool) -> None:
+        pass
+
+    def get_inverted(self) -> bool:
+        return False
+
+    def simulate(self, dt: float) -> None:
+        """Crude plant: position loops converge 10 rad/s; velocity loops track instantly."""
+        if self.mode is PIDMode.POSITION:
+            err = self.setpoint - self.position
+            step = max(-10 * dt, min(10 * dt, err))
+            self.position += step
+            self.rate = step / dt
+        elif self.mode is PIDMode.VELOCITY:
+            self.rate = self.setpoint
+            self.position += self.rate * dt
+        else:
+            self.rate = 0.0

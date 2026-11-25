@@ -135,11 +135,11 @@ class AsyncioScheduler(SchedulerBase):
             if not st.park.should_mount():
                 continue
             prev = self._mounted
-            self._mounted = st.coroutine
+            self._set_mounted(st.coroutine)
             try:
                 outcome = await self._amount_step(st)
             finally:
-                self._mounted = prev
+                self._set_mounted(prev)
             self._finish_sideload(st, outcome)
 
     # -------------------------------------------------------------- driver -------------
@@ -147,7 +147,8 @@ class AsyncioScheduler(SchedulerBase):
         if state.task is None:
             co = state.coroutine
             cmd = state.command
-            state.task = self._make_task(state, lambda: cmd.run(co), cmd._native)
+            body = (lambda: cmd.run(co)) if (cmd._native or self.frontend.pass_co) else (lambda: cmd.run())
+            state.task = self._make_task(state, body, cmd._native)
 
     async def _driver(self, state) -> None:
         data: _AioData = state.aio

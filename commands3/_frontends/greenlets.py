@@ -12,7 +12,13 @@ from __future__ import annotations
 import inspect
 from typing import TYPE_CHECKING, Any, Callable, Iterable, NoReturn
 
-from .._common.coroutine import CoroutineCore, ForkResult, WaitResult
+from .._common.coroutine import (
+    CoroutineCore,
+    ForkResult,
+    WaitResult,
+    _GlobalCoroutineBase,
+    get_current_coroutine,
+)
 from .._common.park import Op
 from .._common.scheduler import Frontend, Task
 
@@ -115,3 +121,43 @@ class GreenletFrontend(Frontend):
 
     def make_task(self, body, co) -> Task:
         return GreenletTask(body)
+
+
+def _cur() -> Coroutine:
+    return get_current_coroutine()  # type: ignore[return-value]
+
+
+class GlobalCoroutine(_GlobalCoroutineBase):
+    """Global ``co`` proxy for greenlet commands without a ``co`` parameter."""
+
+    def yield_(self) -> bool:
+        return _cur().yield_()
+
+    def park(self) -> NoReturn:
+        _cur().park()
+
+    def await_(self, command: "Command") -> ForkResult:
+        return _cur().await_(command)
+
+    def await_all(self, *commands: "Command | Iterable[Command]") -> ForkResult:
+        return _cur().await_all(*commands)
+
+    def await_any(self, *commands: "Command | Iterable[Command]") -> ForkResult:
+        return _cur().await_any(*commands)
+
+    def wait(self, seconds: float) -> None:
+        _cur().wait(seconds)
+
+    def wait_until(self, condition: Callable[[], bool], timeout: float | None = None) -> WaitResult:
+        return _cur().wait_until(condition, timeout)
+
+    def await_future(self, awaitable: Any) -> Any:
+        return _cur().await_future(awaitable)
+
+
+co = GlobalCoroutine()
+
+
+class GreenletNoCoFrontend(GreenletFrontend):
+    name = "greenlets_noco"
+    pass_co = False

@@ -1,0 +1,149 @@
+"""Port of SchedulerTimingTests.java."""
+
+from commands3._common.api import Command
+from commands3._frontends.asyncawait import Coroutine, co
+
+from .helpers import Ref
+
+
+def test_command_awaiting_itself(scheduler):
+    ref = Ref()
+
+    async def body():
+        await co.await_(ref.get())
+
+    command = Command.no_requirements(body).named("Self Await")
+    ref.set(command)
+    scheduler.schedule(command)
+    scheduler.run()
+    assert scheduler.is_running(command)
+
+
+def test_command_deadlock(scheduler):
+    parent_ref, child_ref = Ref(), Ref()
+
+    async def parent_body():
+        await co.await_(child_ref.get())
+
+    async def child_body():
+        await co.await_(parent_ref.get())
+
+    parent = Command.no_requirements(parent_body).named("Parent")
+    child = Command.no_requirements(child_body).named("Child")
+    parent_ref.set(parent)
+    child_ref.set(child)
+    scheduler.schedule(parent)
+    scheduler.run()
+    assert scheduler.is_running(parent) and scheduler.is_running(child)
+    scheduler.run()
+    assert scheduler.is_running(parent) and scheduler.is_running(child)
+    scheduler.cancel(parent)
+    scheduler.run()
+    assert not scheduler.is_running(parent)
+    assert not scheduler.is_running(child)
+
+
+def test_delayed_command_deadlock(scheduler):
+    ref1, ref2 = Ref(), Ref()
+    done1, done2 = Ref(False), Ref(False)
+
+    async def b1():
+        await co.yield_()
+        await co.await_(ref2.get())
+        done1.set(True)
+
+    async def b2():
+        await co.yield_()
+        await co.await_(ref1.get())
+        done2.set(True)
+
+    c1 = Command.no_requirements(b1).named("Command 1")
+    c2 = Command.no_requirements(b2).named("Command 2")
+    ref1.set(c1)
+    ref2.set(c2)
+    scheduler.schedule(c1)
+    scheduler.schedule(c2)
+    scheduler.run()
+    assert scheduler.is_running(c1) and scheduler.is_running(c2)
+    scheduler.run()
+    assert scheduler.is_running(c1) and scheduler.is_running(c2)
+    scheduler.cancel(c2)
+    scheduler.run()
+    assert not scheduler.is_running(c1)
+    assert not scheduler.is_running(c2)
+    assert done1.get(), "Command 1 should have completed normally after command 2 stopped"
+    assert not done2.get()
+
+
+def test_forked_child_runs_once(scheduler):
+    run_count = Ref(0)
+
+    async def inner_body():
+        run_count.increment_and_get()
+        await co.yield_()
+        run_count.increment_and_get()
+        await co.yield_()
+
+    inner = Command.no_requirements(inner_body).named("Inner")
+
+    async def outer_body():
+        await co.await_(inner)
+
+    scheduler.schedule(Command.no_requirements(outer_body).named("Outer"))
+    scheduler.run()
+    assert run_count.get() == 1
+
+
+def test_short_wait_waits_one_loop(scheduler, clock):
+    completed = Ref(False)
+
+    async def body():
+        await co.wait(0.001)
+        completed.set(True)
+
+    scheduler.schedule(Command.no_requirements(body).named("Short Wait"))
+    scheduler.run()
+    clock.set(1.0)
+    scheduler.run()
+    assert completed.get()
+
+
+def test_short_wait_waits_one_loop_with_fast_period(scheduler, clock):
+    completed = Ref(False)
+
+    async def body():
+        await co.wait(0.001)
+        completed.set(True)
+
+    scheduler.schedule(Command.no_requirements(body).named("Short Wait"))
+    scheduler.run()
+    clock.set(0.0005)
+    scheduler.run()
+    assert not completed.get()
+    clock.set(0.001)
+    scheduler.run()
+    assert completed.get()
+
+
+def test_awaiting_exits_immediately_without_a_one_loop_delay(scheduler):
+    inner_runs = Ref(0)
+
+    async def inner_body():
+        inner_runs.increment_and_get()
+        await co.yield_()
+        inner_runs.increment_and_get()
+
+    inner = Command.no_requirements(inner_body).named("Inner")
+
+    async def outer_body():
+        await co.await_(inner)
+
+    outer = Command.no_requirements(outer_body).named("Outer")
+    scheduler.schedule(outer)
+    scheduler.run()
+    assert scheduler.is_running(inner) and scheduler.is_running(outer)
+    assert inner_runs.get() == 1
+    scheduler.run()
+    assert not scheduler.is_running(inner)
+    assert not scheduler.is_running(outer)
+    assert inner_runs.get() == 2

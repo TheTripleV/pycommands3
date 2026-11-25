@@ -13,5 +13,6 @@ class CustomScheduler(SchedulerBase):
             co = state.coroutine
             cmd = state.command
             assert cmd is not None  # sideload tasks are created eagerly
-            state.task = self._make_task(state, lambda: cmd.run(co), cmd._native)
+            body = (lambda: cmd.run(co)) if (cmd._native or self.frontend.pass_co) else (lambda: cmd.run())
+            state.task = self._make_task(state, body, cmd._native)
         return step_task(state.task)
