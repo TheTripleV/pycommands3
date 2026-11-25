@@ -1,14 +1,15 @@
-# pycommands3: WPILib Commands v3 for Python, eight ways
+# pycommands3: WPILib Commands v3 for Python, sixteen ways
 
 This is a complete Python port of `allwpilib/commandsv3` (2027 beta), implemented once per
-combination of **coroutine style** × **runtime**:
+combination of **coroutine style** × **runtime** × **`co` convention** (explicit `co` parameter
+vs. global `co` with no parameter):
 
 | | custom runtime (`commands3.custom.*`) | asyncio runtime (`commands3.aio.*`) |
 |---|---|---|
-| async/await | `commands3.custom.asyncawait` | `commands3.aio.asyncawait` |
-| generators | `commands3.custom.generators` | `commands3.aio.generators` |
-| async generators | `commands3.custom.asyncgen` | `commands3.aio.asyncgen` |
-| greenlet | `commands3.custom.greenlets` | `commands3.aio.greenlets` |
+| async/await | `asyncawait` / `asyncawait_noco` | `asyncawait` / `asyncawait_noco` |
+| generators | `generators` / `generators_noco` | `generators` / `generators_noco` |
+| async generators | `asyncgen` / `asyncgen_noco` | `asyncgen` / `asyncgen_noco` |
+| greenlet | `greenlets` / `greenlets_noco` | `greenlets` / `greenlets_noco` |
 
 It targets robotpy `wpilib==2027.0.0a8` (snake_case API, OpModeRobot) and Python 3.13+.
 
@@ -30,6 +31,61 @@ async def body(co: Coroutine):                   def body(co: Coroutine):
     await co.await_(gripper.release())               co.await_(gripper.release())
 
 score = elevator.run(body).named("Score")        # identical in every style
+```
+
+### Without the `co` parameter (`*_noco`)
+
+The `*_noco` variants take no `co` parameter (like `commandsv2`). Command bodies take no
+arguments, and suspend through the global `co` proxy, which refers to the command that is
+currently running, so `co` is only valid inside a command body. Import it from the variant
+module for the style you use:
+
+```python
+# async/await (commands3.custom.asyncawait_noco)     # generators (commands3.custom.generators_noco)
+async def body():                                   def body():
+    while not elevator.at_goal():                       while not elevator.at_goal():
+        elevator.drive_toward_goal()                        elevator.drive_toward_goal()
+        await co.yield_()                                   yield
+    await co.await_(gripper.release())                  yield from co.await_(gripper.release())
+
+# async generators (commands3.custom.asyncgen_noco)   # greenlet (commands3.custom.greenlets_noco)
+async def body():                                   def body():
+    while not elevator.at_goal():                       while not elevator.at_goal():
+        elevator.drive_toward_goal()                        elevator.drive_toward_goal()
+        yield                    # one cycle              co.yield_()   # from any call depth
+    await co.await_(gripper.release())                  co.await_(gripper.release())
+
+score = elevator.run(body).named("Score")           # identical in every style
+```
+
+A complete command, from `examples/hatchbot/asyncawait_noco/autos.py`. The only change from
+the `co`-parameter version is that `body` takes no argument:
+
+```python
+from commands3.custom.asyncawait_noco import Command, co
+
+def complex_auto(drive: DriveMechanism, hatch: HatchMechanism) -> Command:
+    async def body():
+        await co.await_(drive.drive_distance(AutoConstants.AUTO_DRIVE_DISTANCE_INCHES,
+                                             AutoConstants.AUTO_DRIVE_SPEED))
+        await co.await_(hatch.release_hatch_command())
+        await co.await_(drive.drive_distance(AutoConstants.AUTO_BACKUP_DISTANCE_INCHES,
+                                             AutoConstants.AUTO_DRIVE_SPEED))
+
+    return Command.requiring(drive, hatch).executing(body).named("Complex Auto")
+```
+
+The `*_noco` variants run on the same scheduler as the `co`-parameter variants, so the
+robot class looks the same. Only the import changes. Using the asyncio runtime, import from
+`commands3.aio.*_noco` instead of `commands3.custom.*_noco`:
+
+```python
+from commands3.aio.asyncawait_noco import Command, Scheduler, co   # asyncio runtime
+from commands3.button import CommandXboxController
+
+class Robot(wpilib.OpModeRobot):
+    def robot_periodic(self):
+        Scheduler.get_default().run()
 ```
 
 ```python
@@ -62,7 +118,7 @@ commands3/_common/      the spec, written once: Command, builders, groups, State
                         the scheduling algorithm itself (port of Scheduler.java)
 commands3/_frontends/   how user code suspends: Coroutine API + task adapter per style
 commands3/_runtime/     who resumes it: custom (direct stepping) | asyncio (Task per command)
-commands3/{custom,aio}/ the eight public variant modules
+commands3/{custom,aio}/ the sixteen public variant modules (eight per runtime)
 ```
 
 Every suspension resolves to a `Park` object, the Python equivalent of Java's
@@ -87,21 +143,23 @@ command:
 
 | suite | what | passing |
 |---|---|---|
-| `tests/conformance` | All 23 Java test classes (the 274 Java test cases, a few merged via parametrization), written once in async/await and mechanically translated to the other 3 styles (`tools/translate.py`), each run on both runtimes, plus code-review regression tests and extra scoped-trigger tests | **2252** |
-| `tests/integration` | 5 robot projects (WPILib's commandv3 template and skeleton, `hatchbotcmdv3`, `rebuiltcmdv3`, and a cascading-superstructure demo) × 8 variants, run under the real robot framework in robotpy simulation. Traces must be identical across variants | **9** (40 robot runs) |
-| `tests/test_frontends.py` | Style-specific behaviour and failure modes | 30 |
+| `tests/conformance` | All 23 Java test classes (the 274 Java test cases, a few merged via parametrization), written once in async/await (both `co`-param and `*_noco`) and mechanically translated to the other 3 styles (`tools/translate.py`), each run on both runtimes, plus code-review regression tests and extra scoped-trigger tests | **4504** |
+| `tests/integration` | 5 robot projects (WPILib's commandv3 template and skeleton, `hatchbotcmdv3`, `rebuiltcmdv3`, and a cascading-superstructure demo) × 16 variants, run under the real robot framework in robotpy simulation. Traces must be identical across variants | **9** (80 robot runs) |
+| `tests/test_frontends.py` | Style-specific behaviour and failure modes (both `co`-param and `*_noco`) | 44 |
 | `tests/test_asyncio_interop.py` | `to_thread`, `asyncio.sleep`, foreign futures, cancellation, named tasks | 7 |
 | `tests/test_buttons.py` | Controllers and buttons against `DriverStationSim` | 15 |
 | `tests/test_static_analysis.py` | What pyright catches per style | 1 |
 | `tests/test_extras.py` | Debounce, NetworkTables protobuf telemetry | 3 |
-| total | | **2317**, about 7 s |
+| total | | **4583**, about 14 s |
 
 `pyright commands3` reports 0 errors, and every example in every style also type-checks
 with 0 errors.
 
 ### Performance
 
-From `bench/bench.py`: Python 3.13 on Apple Silicon, µs per `Scheduler.run()`.
+From `bench/bench.py`: Python 3.13 on Apple Silicon, µs per `Scheduler.run()`. The benchmark
+covers the eight `co`-parameter variants only. The `*_noco` variants use the same frontends
+and runtimes, differing only in how `co` is passed.
 
 | variant | 50 busy | 50 parked | 10 × depth-5 | robot-ish mix | dead cycles (start / resume) | heap B/command |
 |---|---|---|---|---|---|---|
@@ -163,7 +221,7 @@ From `bench/bench.py`: Python 3.13 on Apple Silicon, µs per `Scheduler.run()`.
 ```sh
 uv venv -p 3.13 .venv && uv pip install -p .venv --prerelease=allow -e ".[test]"
 .venv/bin/python -m pytest                      # everything (~6 s)
-.venv/bin/python bench/bench.py                 # benchmarks for all 8 variants
+.venv/bin/python bench/bench.py                 # benchmarks for the 8 co-parameter variants
 .venv/bin/pyright commands3                     # type check
 ./tools/regen.sh                                # re-translate tests + examples from async/await
 tools/java_parity/run.sh                        # run the scoped-trigger scenarios on Java commandsv3 (JDK 25)
