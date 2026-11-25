@@ -1,0 +1,67 @@
+from typing import Callable, SupportsFloat, SupportsIndex
+
+import telemetry
+import wpilib
+
+from commands3.custom.asyncawait import Command, Coroutine, Mechanism
+
+from constants import DriveConstants
+
+
+class DriveMechanism(Mechanism, telemetry.TelemetryLoggable):
+    def __init__(self):
+        Mechanism.__init__(self)
+        telemetry.TelemetryLoggable.__init__(self)
+        self.left1 = wpilib.PWMMotorController(DriveConstants.LEFT_MOTOR1_PORT)
+        self.right1 = wpilib.PWMMotorController(DriveConstants.RIGHT_MOTOR1_PORT)
+        # Commanded outputs are recorded too: robotpy 2027a8's generic PWMMotorController does
+        # not round-trip get_throttle(), and tests/telemetry want to see what was commanded.
+        self.left_output = self.right_output = 0.0
+        self.drive = wpilib.DifferentialDrive(self._set_left, self._set_right)
+        self.left_encoder = wpilib.Encoder(*DriveConstants.LEFT_ENCODER_PORTS,
+                                           DriveConstants.LEFT_ENCODER_REVERSED)
+        self.right_encoder = wpilib.Encoder(*DriveConstants.RIGHT_ENCODER_PORTS,
+                                            DriveConstants.RIGHT_ENCODER_REVERSED)
+        self.right1.set_inverted(True)
+        self.left_encoder.set_distance_per_pulse(DriveConstants.ENCODER_DISTANCE_PER_PULSE)
+        self.right_encoder.set_distance_per_pulse(DriveConstants.ENCODER_DISTANCE_PER_PULSE)
+
+    def _set_left(self, value: SupportsFloat | SupportsIndex) -> None:
+        self.left_output = float(value)  # type: ignore[arg-type]
+        self.left1.set_throttle(self.left_output)
+
+    def _set_right(self, value: SupportsFloat | SupportsIndex) -> None:
+        self.right_output = float(value)  # type: ignore[arg-type]
+        self.right1.set_throttle(self.right_output)
+
+    def arcade_drive(self, speed: Callable[[], float], turn: Callable[[], float]) -> Command:
+        return self.run_repeatedly(lambda: self.drive.arcade_drive(speed(), turn())).named("Arcade Drive")
+
+    def drive_distance(self, distance: float, speed: float) -> Command:
+        async def body(co: Coroutine):
+            self.reset_encoders()
+            if distance >= 0:
+                while self.get_average_encoder_distance() < distance:
+                    self.drive.tank_drive(speed, 0)
+                    await co.yield_()
+            else:
+                while self.get_average_encoder_distance() > distance:
+                    self.drive.tank_drive(-speed, 0)
+                    await co.yield_()
+            self.drive.tank_drive(0, 0)
+
+        return self.run(body).named(f"Drive Distance[{distance}@{speed}]")
+
+    def reset_encoders(self) -> None:
+        self.left_encoder.reset()
+        self.right_encoder.reset()
+
+    def get_average_encoder_distance(self) -> float:
+        return (self.left_encoder.get_distance() + self.right_encoder.get_distance()) / 2.0
+
+    def set_max_output(self, max_output: float) -> None:
+        self.drive.set_max_output(max_output)
+
+    def log_to(self, table) -> None:
+        table.log("leftDistance", self.left_encoder.get_distance())
+        table.log("rightDistance", self.right_encoder.get_distance())

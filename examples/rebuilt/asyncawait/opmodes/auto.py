@@ -1,0 +1,33 @@
+import wpilib
+from wpilib.opmodes import autonomous
+
+from commands3.custom.asyncawait import Command, Coroutine, Trigger
+
+import constants as C
+
+
+@autonomous(name="DoNothingAuto")
+class DoNothingAuto(wpilib.OpMode):
+    def __init__(self, robot):
+        super().__init__()
+
+
+@autonomous(name="SweepAuto")
+class SweepAuto(wpilib.OpMode):
+    def __init__(self, robot):
+        super().__init__()
+        # Everything set up here is scoped to this opmode and undone when it ends.
+        self.enabled = Trigger(wpilib.RobotState.is_enabled)
+        robot.intake.set_default_command(robot.intake.stow())
+        robot.in_neutral_zone.on_true(robot.intake.intake())
+        self.enabled.on_true(self.sweep_and_score(robot))
+
+    @staticmethod
+    def sweep_and_score(robot) -> Command:
+        async def body(co: Coroutine):
+            await co.await_(robot.swerve_drive.follow_path("nz-sweep-left-trench"))
+            hub = C.target_hub()
+            if hub is not None:
+                await co.await_(robot.shoot_at(hub))
+
+        return Command.no_requirements(body).named("Sweep and Score")

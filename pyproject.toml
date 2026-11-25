@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pycommands3"
+version = "0.0.1"
+description = "Python ports of WPILib Commands v3 (several coroutine designs)"
+requires-python = ">=3.13"
+dependencies = ["wpilib>=2027.0.0a8"]
+
+[project.optional-dependencies]
+greenlet = ["greenlet>=3"]
+test = ["pytest", "protobuf", "greenlet>=3", "pyright"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["commands3"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+include = ["commands3"]

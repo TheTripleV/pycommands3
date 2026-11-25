@@ -1,0 +1,43 @@
+"""Cascading superstructure demo robot (not a WPILib example; built for this comparison)."""
+
+import wpilib
+from wpilib.opmodes import teleop
+
+from commands3.button import CommandGamepad
+from commands3.custom.asyncawait import Scheduler
+
+from plant import Plant
+from superstructure import Superstructure
+
+DRIVER_PORT = 0
+
+
+class Robot(wpilib.OpModeRobot):
+    def __init__(self):
+        super().__init__()
+        self.plant = Plant()
+        self.controller = CommandGamepad(DRIVER_PORT)
+        self.superstructure = Superstructure(
+            self.plant,
+            wants_intake=self.controller.left_bumper(),   # Triggers are callables
+            wants_score=self.controller.right_bumper(),
+        )
+
+    def robot_periodic(self):
+        Scheduler.get_default().run()
+
+    def simulation_periodic(self):
+        self.plant.step()
+
+
+@teleop(name="Superstructure Teleop")
+class SuperstructureTeleop(wpilib.OpMode):
+    def __init__(self, robot: Robot):
+        super().__init__()
+        self.robot = robot
+
+    def start(self):
+        # Runs when the robot is enabled in this opmode. (The constructor runs while disabled,
+        # where the machine's first fork would be refused: its mechanisms aren't controllable.)
+        # Scheduled inside the opmode, it is canceled automatically when the opmode ends.
+        Scheduler.get_default().schedule(self.robot.superstructure.machine)

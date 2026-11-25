@@ -1,0 +1,138 @@
+"""Port of SchedulerDefaultCommandTests.java."""
+
+from commands3._common.api import Command
+from commands3._frontends.asyncawait import Coroutine
+
+from .helpers import DummyMechanism
+
+
+def test_global_default_command_is_always_used(scheduler, robot):
+    mech = DummyMechanism("Mech", scheduler)
+    default = mech.run(Coroutine.park).named("Custom Default Command")
+    mech.set_default_command(default)
+    assert not scheduler.is_scheduled_or_running(default)
+    scheduler.run()
+    assert scheduler.is_running(default)
+    robot.opmode_id, robot.opmode_name = 1, "Opmode 1"
+    scheduler.run()
+    assert scheduler.is_running(default), "Default command should still be running when the opmode changes"
+
+
+def test_default_command_set_in_opmode_stops(scheduler, robot):
+    mech = DummyMechanism("Mech", scheduler)
+    initial = mech.idle()
+    mech.set_default_command(initial)
+    robot.opmode_id, robot.opmode_name = 1, "Opmode 1"
+    scoped = mech.run(Coroutine.park).named("Custom Default Command")
+    mech.set_default_command(scoped)
+    scheduler.run()
+    assert scheduler.is_running(scoped)
+    robot.opmode_id, robot.opmode_name = 2, "Opmode 2"
+    scheduler.run()
+    assert not scheduler.is_running(scoped)
+    assert scheduler.is_running(initial)
+
+
+def test_default_command_set_in_command_stops(scheduler):
+    mech = DummyMechanism("Mech", scheduler)
+    initial = mech.idle()
+    mech.set_default_command(initial)
+    scoped = mech.run(Coroutine.park).named("Command-Scoped Default Command")
+
+    async def body(co: Coroutine):
+        mech.set_default_command(scoped)
+        await co.park()
+
+    scoping = Command.no_requirements(body).named("Scoping Command")
+    scheduler.schedule(scoping)
+    scheduler.run()
+    assert scheduler.is_running(scoping)
+    assert scheduler.is_running(scoped)
+    assert not scheduler.is_running(initial)
+    scheduler.cancel(scoping)
+    scheduler.run()
+    assert not scheduler.is_running(scoping)
+    assert not scheduler.is_running(scoped)
+    assert scheduler.is_running(initial)
+
+
+def test_interrupting_default_command_interrupts_owner(scheduler):
+    mech = DummyMechanism("Mech", scheduler)
+    initial = mech.idle()
+    mech.set_default_command(initial)
+    scoped = mech.run(Coroutine.park).named("Command-Scoped Default Command")
+
+    async def body(co: Coroutine):
+        mech.set_default_command(scoped)
+        await co.park()
+
+    scoping = Command.no_requirements(body).named("Scoping Command")
+    interruptor = mech.run(Coroutine.park).named("Interruptor")
+    scheduler.schedule(scoping)
+    scheduler.run()
+    assert scheduler.is_running(scoping)
+    assert scheduler.is_running(scoped)
+    assert not scheduler.is_running(initial)
+    scheduler.schedule(interruptor)
+    scheduler.run()
+    assert not scheduler.is_running(scoping)
+    assert not scheduler.is_running(scoped)
+    assert not scheduler.is_running(initial)
+    assert scheduler.is_running(interruptor)
+
+
+def test_default_command_stackup(scheduler, events, robot):
+    mech = DummyMechanism("Mech", scheduler)
+    initial = mech.idle()
+    mech.set_default_command(initial)
+    opmode_scoped = mech.run(Coroutine.park).named("Opmode Scoped Default Command")
+    command_scoped = mech.run(Coroutine.park).named("Command-Scoped Default Command")
+
+    async def body(co: Coroutine):
+        mech.set_default_command(command_scoped)
+        await co.park()
+
+    scoping = Command.no_requirements(body).named("Scoping Command")
+    robot.opmode_id, robot.opmode_name = 1, "Opmode 1"
+    mech.set_default_command(opmode_scoped)
+    scheduler.run()
+    assert scheduler.is_running(opmode_scoped)
+    scheduler.schedule(scoping)
+    scheduler.run()
+    assert not scheduler.is_running(opmode_scoped)
+    assert scheduler.is_running(command_scoped)
+    events.clear()
+    robot.opmode_id, robot.opmode_name = 2, "Opmode 2"
+    scheduler.run()
+    assert not scheduler.is_running(opmode_scoped)
+    assert not scheduler.is_running(scoping)
+    assert not scheduler.is_running(command_scoped)
+    assert scheduler.is_running(initial), "Global default command should be active"
+
+
+def test_default_command_changing_default_command(scheduler):
+    class Mech(DummyMechanism):
+        def make_command1(self) -> Command:
+            async def body(co: Coroutine):
+                self.set_default_command(self.make_command2())
+                await co.park()
+
+            return self.run(body).named("Command 1")
+
+        def make_command2(self) -> Command:
+            async def body(co: Coroutine):
+                self.set_default_command(self.make_command1())
+                await co.park()
+
+            return self.run(body).named("Command 2")
+
+    mech = Mech("Mech", scheduler)
+    mech.set_default_command(mech.make_command1())
+    for i in range(10):
+        scheduler.run()
+        expected = "Command 1" if i % 2 == 0 else "Command 2"
+        assert [c.name() for c in scheduler.get_running_commands_for(mech)] == [expected]
+    bindings = scheduler._get_default_command_bindings_for(mech)
+    assert [b.command.name() for b in bindings] == ["Command 1", "Command 2", "Command 1"]
+    scheduler.run()
+    assert [b.command.name() for b in bindings] == ["Command 1", "Command 2"]

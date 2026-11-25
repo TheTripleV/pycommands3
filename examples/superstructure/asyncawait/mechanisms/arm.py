@@ -1,0 +1,22 @@
+from commands3.custom.asyncawait import Command, Coroutine, Mechanism
+
+
+class Arm(Mechanism):
+    def __init__(self, plant):
+        super().__init__("Arm")
+        self.p = plant
+
+    def at(self, angle: float) -> bool:
+        return abs(self.p.arm_angle - angle) < 1.0
+
+    def to(self, angle: float) -> Command:
+        async def body(co: Coroutine):
+            try:
+                while True:
+                    err = angle - self.p.arm_angle
+                    self.p.arm_volts = max(-6.0, min(6.0, 0.5 * err)) if abs(err) > 0.5 else 0.0
+                    await co.yield_()
+            finally:
+                self.p.arm_volts = 0.0
+
+        return self.run(body).named(f"Arm.to({angle})")
